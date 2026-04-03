@@ -27,19 +27,6 @@ $app->options('/{routes:.+}', function (Request $request, Response $response) {
     return $response;
 });
 
-$app->get('/uploads/{folder}/{filename}', function (Request $request, Response $response, array $args) {
-    $file = __DIR__ . '/../uploads/' . $args['folder'] . '/' . $args['filename'];
-
-    if (!file_exists($file)) {
-        $response->getBody()->write('File not found');
-        return $response->withStatus(404);
-    }
-
-    $mime = mime_content_type($file);
-    $response->getBody()->write(file_get_contents($file));
-    return $response->withHeader('Content-Type', $mime);
-});
-
 $app->get('/', function (Request $request, Response $response) {
     return jsonResponse($response, ['message' => 'Activity 20 API is running.']);
 });
@@ -188,6 +175,7 @@ $app->post('/api/logout', function (Request $request, Response $response) {
     $wrapped = authMiddleware($request, new class($response) {
         private $response;
         public function __construct($response) { $this->response = $response; }
+
         public function handle($request) {
             try {
                 $pdo = db();
@@ -223,11 +211,14 @@ $app->post('/api/forgot-password', function (Request $request, Response $respons
         $user = $stmt->fetch();
 
         if ($user) {
-            $resetToken = generateRandomToken();
-            $resetExpires = date('Y-m-d H:i:s', time() + 3600);
+           $resetToken = generateRandomToken();
 
-            $stmt = $pdo->prepare('UPDATE users SET reset_token = ?, reset_token_expires = ? WHERE user_id = ?');
-            $stmt->execute([$resetToken, $resetExpires, $user['user_id']]);
+$stmt = $pdo->prepare("
+    UPDATE users
+    SET reset_token = ?, reset_token_expires = DATE_ADD(NOW(), INTERVAL 1 HOUR)
+    WHERE user_id = ?
+");
+$stmt->execute([$resetToken, $user['user_id']]);
 
             try {
                 sendResetEmail($user['email'], $user['fullname'], $resetToken);
@@ -299,6 +290,7 @@ $app->get('/api/profile', function (Request $request, Response $response) {
     $wrapped = authMiddleware($request, new class($response) {
         private $response;
         public function __construct($response) { $this->response = $response; }
+
         public function handle($request) {
             try {
                 $pdo = db();
@@ -329,10 +321,11 @@ $app->get('/api/profile', function (Request $request, Response $response) {
     return $wrapped;
 });
 
-$app->put('/api/profile', function (Request $request, Response $response) {
+$app->post('/api/profile/update', function (Request $request, Response $response) {
     $wrapped = authMiddleware($request, new class($response) {
         private $response;
         public function __construct($response) { $this->response = $response; }
+
         public function handle($request) {
             try {
                 $pdo = db();
@@ -369,10 +362,12 @@ $app->put('/api/profile', function (Request $request, Response $response) {
                 $profileImagePath = $currentUser['profile_image'];
 
                 if (!empty($files['profile_image']['tmp_name'])) {
-                    $filename = moveUploadedFile(__DIR__ . '/../uploads/profile', $files['profile_image']);
-                    if ($currentUser['profile_image']) {
+                    $filename = moveUploadedFile(__DIR__ . '/../public/uploads/profile', $files['profile_image']);
+
+                    if (!empty($currentUser['profile_image'])) {
                         deleteFileIfExists($currentUser['profile_image']);
                     }
+
                     $profileImagePath = '/uploads/profile/' . $filename;
                 }
 
@@ -381,7 +376,14 @@ $app->put('/api/profile', function (Request $request, Response $response) {
                     SET username = ?, fullname = ?, email = ?, password = ?, profile_image = ?
                     WHERE user_id = ?
                 ");
-                $stmt->execute([$username, $fullname, $email, $hashedPassword, $profileImagePath, $user['user_id']]);
+                $stmt->execute([
+                    $username,
+                    $fullname,
+                    $email,
+                    $hashedPassword,
+                    $profileImagePath,
+                    $user['user_id']
+                ]);
 
                 $stmt = $pdo->prepare("
                     SELECT user_id, username, fullname, email, profile_image, is_verified, created_at, updated_at
@@ -389,7 +391,10 @@ $app->put('/api/profile', function (Request $request, Response $response) {
                 ");
                 $stmt->execute([$user['user_id']]);
                 $updatedUser = $stmt->fetch();
-                $updatedUser['profile_image'] = publicFileUrl($request, $updatedUser['profile_image']);
+
+                if ($updatedUser) {
+                    $updatedUser['profile_image'] = publicFileUrl($request, $updatedUser['profile_image']);
+                }
 
                 return jsonResponse($this->response, [
                     'message' => 'Profile updated successfully.',
@@ -411,6 +416,7 @@ $app->post('/api/account', function (Request $request, Response $response) {
     $wrapped = authMiddleware($request, new class($response) {
         private $response;
         public function __construct($response) { $this->response = $response; }
+
         public function handle($request) {
             try {
                 $pdo = db();
@@ -444,7 +450,7 @@ $app->post('/api/account', function (Request $request, Response $response) {
 
                 $accountImage = null;
                 if (!empty($files['account_image']['tmp_name'])) {
-                    $filename = moveUploadedFile(__DIR__ . '/../uploads/account', $files['account_image']);
+                    $filename = moveUploadedFile(__DIR__ . '/../public/uploads/account', $files['account_image']);
                     $accountImage = '/uploads/account/' . $filename;
                 }
 
@@ -475,6 +481,7 @@ $app->get('/api/account', function (Request $request, Response $response) {
     $wrapped = authMiddleware($request, new class($response) {
         private $response;
         public function __construct($response) { $this->response = $response; }
+
         public function handle($request) {
             try {
                 $pdo = db();
@@ -510,10 +517,12 @@ $app->get('/api/account/{id}', function (Request $request, Response $response, a
     $wrapped = authMiddleware($request, new class($response, $args) {
         private $response;
         private $args;
+
         public function __construct($response, $args) {
             $this->response = $response;
             $this->args = $args;
         }
+
         public function handle($request) {
             try {
                 $pdo = db();
@@ -547,24 +556,19 @@ $app->get('/api/account/{id}', function (Request $request, Response $response, a
     return $wrapped;
 });
 
-$app->put('/api/account', function (Request $request, Response $response) {
+$app->post('/api/account/update', function (Request $request, Response $response) {
     $wrapped = authMiddleware($request, new class($response) {
         private $response;
         public function __construct($response) { $this->response = $response; }
+
         public function handle($request) {
             try {
                 $pdo = db();
-
-                $contentType = $_SERVER['CONTENT_TYPE'] ?? '';
-                $data = [];
-
-                if (stripos($contentType, 'application/json') !== false) {
-                    $data = $request->getParsedBody();
-                } else {
-                    parse_str(file_get_contents('php://input'), $data);
-                }
-
                 $user = $request->getAttribute('user');
+
+                $data = $_POST;
+                $files = $_FILES;
+
                 $accountId = $data['account_id'] ?? null;
 
                 if (!$accountId) {
@@ -583,12 +587,31 @@ $app->put('/api/account', function (Request $request, Response $response) {
                 $accountUsername = trim($data['account_username'] ?? $data['username'] ?? $currentItem['account_username']);
                 $accountPassword = trim($data['account_password'] ?? $data['password'] ?? $currentItem['account_password']);
 
+                $accountImagePath = $currentItem['account_image'];
+
+                if (!empty($files['account_image']['tmp_name'])) {
+                    $filename = moveUploadedFile(__DIR__ . '/../public/uploads/account', $files['account_image']);
+
+                    if (!empty($currentItem['account_image'])) {
+                        deleteFileIfExists($currentItem['account_image']);
+                    }
+
+                    $accountImagePath = '/uploads/account/' . $filename;
+                }
+
                 $stmt = $pdo->prepare("
                     UPDATE account_items
-                    SET site = ?, account_username = ?, account_password = ?
+                    SET site = ?, account_username = ?, account_password = ?, account_image = ?
                     WHERE account_id = ? AND user_id = ?
                 ");
-                $stmt->execute([$site, $accountUsername, $accountPassword, $accountId, $user['user_id']]);
+                $stmt->execute([
+                    $site,
+                    $accountUsername,
+                    $accountPassword,
+                    $accountImagePath,
+                    $accountId,
+                    $user['user_id']
+                ]);
 
                 return jsonResponse($this->response, ['message' => 'Account item updated successfully.']);
             } catch (Exception $e) {
@@ -607,6 +630,7 @@ $app->delete('/api/account', function (Request $request, Response $response) {
     $wrapped = authMiddleware($request, new class($response) {
         private $response;
         public function __construct($response) { $this->response = $response; }
+
         public function handle($request) {
             try {
                 $pdo = db();

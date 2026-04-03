@@ -59,7 +59,10 @@ function publicFileUrl($request, ?string $relativePath): ?string
         return $relativePath;
     }
 
+    $relativePath = '/' . ltrim($relativePath, '/');
+
     $uri = $request->getUri();
+
     return $uri->getScheme() . '://' . $uri->getHost()
         . ($uri->getPort() ? ':' . $uri->getPort() : '')
         . $relativePath;
@@ -67,7 +70,7 @@ function publicFileUrl($request, ?string $relativePath): ?string
 
 function ensureUploadFolders(): void
 {
-    $root = __DIR__ . '/../uploads';
+    $root = __DIR__ . '/../public/uploads';
     $profile = $root . '/profile';
     $account = $root . '/account';
 
@@ -91,11 +94,15 @@ function moveUploadedFile(string $directory, array $uploadedFile): ?string
         throw new Exception('File size must not exceed 5MB.');
     }
 
+    if (!is_dir($directory)) {
+        mkdir($directory, 0777, true);
+    }
+
     $ext = pathinfo($uploadedFile['name'], PATHINFO_EXTENSION);
     $safeName = preg_replace('/[^a-zA-Z0-9-_]/', '_', pathinfo($uploadedFile['name'], PATHINFO_FILENAME));
     $filename = time() . '-' . $safeName . '.' . $ext;
 
-    $targetPath = $directory . DIRECTORY_SEPARATOR . $filename;
+    $targetPath = rtrim($directory, '/\\') . DIRECTORY_SEPARATOR . $filename;
 
     if (!move_uploaded_file($uploadedFile['tmp_name'], $targetPath)) {
         throw new Exception('Failed to upload file.');
@@ -109,7 +116,7 @@ function deleteFileIfExists(?string $relativePath): void
     if (!$relativePath) return;
 
     $clean = ltrim($relativePath, '/');
-    $fullPath = __DIR__ . '/../' . $clean;
+    $fullPath = __DIR__ . '/../public/' . $clean;
 
     if (file_exists($fullPath)) {
         @unlink($fullPath);

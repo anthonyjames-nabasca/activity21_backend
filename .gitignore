@@ -1,0 +1,21 @@
+# NODE
+node_modules/
+dist/
+
+# ENV
+.env
+.env.*
+
+# PHP
+vendor/
+
+# uploads (keep folder only)
+uploads/*
+!uploads/.gitkeep
+
+# logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
